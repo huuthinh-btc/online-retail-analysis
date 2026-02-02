@@ -85,7 +85,7 @@ def load_with_pandas(file_bytes: bytes):
     dropped = raw_rows - cleaned_rows
 
     # return pandas DataFrame
-    df = vaex.from_pandas(pdf, copy_index=False)
+    df = pdf.copy()
 
     meta = {
         "raw_rows": raw_rows,
@@ -109,8 +109,8 @@ def safe_top_n(pdf: pd.DataFrame, by: str, metric: str, n=10):
     return out
 
 
-def compute_rfm(vdf: vaex.dataframe.DataFrame) -> pd.DataFrame:
-    if "CustomerID" not in df.get_column_names():
+def compute_rfm(df: pd.DataFrame) -> pd.DataFrame:
+    if "CustomerID" not in df.columns.tolist():
         raise ValueError("Thiếu CustomerID để chạy RFM")
 
     ref_date = pd.to_datetime(df["InvoiceDate"].max())
@@ -118,9 +118,9 @@ def compute_rfm(vdf: vaex.dataframe.DataFrame) -> pd.DataFrame:
     rfm = df.groupby(
         by="CustomerID",
         agg={
-            "LastPurchase": vaex.agg.max("InvoiceDate"),
-            "Frequency": vaex.agg.nunique("InvoiceNo"),
-            "Monetary": vaex.agg.sum("Revenue"),
+            "LastPurchase": pd.NamedAgg(column=("InvoiceDate"),
+            "Frequency": pd.NamedAgg(column=("InvoiceNo"),
+            "Monetary": pd.NamedAgg(column=("Revenue"),
         }
     ).to_pandas_df()
 
@@ -178,10 +178,10 @@ if "meta" not in st.session_state:
 # =========================
 if uploaded:
     try:
-        vdf, meta = load_with_pandas_then_vaex(uploaded.getvalue())
+        vdf= load_with_pandas(uploaded.getvalue())
         st.session_state.df = vdf
         st.session_state.meta = meta
-        st.success("Dataset loaded successfully (Vaex) ✅")
+        st.success("Dataset loaded successfully ✅")
         st.caption(f"Rows: {len(df):,} | Date range: {meta['min_date']} → {meta['max_date']}")
         if meta["dropped_rows"] > 0:
             st.warning(f"Đã loại {meta['dropped_rows']:,} dòng lỗi/hoàn-huỷ/giá-trị âm hoặc thiếu.")
@@ -353,7 +353,7 @@ elif page == "Visualization":
 elif page == "RFM Segmentation":
     st.subheader("5) RFM Analysis (Customer Segmentation)")
 
-    st.write("Chạy RFM trên **Vaex** (groupby nhanh) → xuất ra pandas để hiển thị/plot.")
+    st.write("Chạy RFM trên **Pandas** (groupby) → xuất ra pandas để hiển thị/plot.")
     if st.button("Compute RFM"):
         try:
             rfm = compute_rfm(df)
