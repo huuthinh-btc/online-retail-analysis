@@ -15,7 +15,7 @@ st.set_page_config(
 )
 
 st.title("📊 Online Retail Analysis System")
-st.caption("Pandas-based EDA & RFM Customer Segmentation")
+st.caption("Pandas-based EDA & RFM Customer Segmentation (Big Data Demo)")
 
 # =========================
 # Helpers
@@ -31,6 +31,10 @@ def standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_with_pandas(file_bytes: bytes):
+    """
+    Unified data loading & cleaning pipeline
+    Used for BOTH uploaded files and sample dataset
+    """
     df = pd.read_csv(io.BytesIO(file_bytes), encoding="latin1")
     df = standardize_columns(df)
 
@@ -39,6 +43,7 @@ def load_with_pandas(file_bytes: bytes):
     if missing:
         raise ValueError(f"Thiếu cột bắt buộc: {missing}")
 
+    # Type casting
     df["InvoiceNo"] = df["InvoiceNo"].astype(str)
     df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce")
     df["UnitPrice"] = pd.to_numeric(df["UnitPrice"], errors="coerce")
@@ -46,7 +51,7 @@ def load_with_pandas(file_bytes: bytes):
 
     raw_rows = len(df)
 
-    # Clean
+    # Cleaning
     df = df[~df["InvoiceNo"].str.startswith("C")]
     df = df.dropna(subset=["InvoiceDate", "Quantity", "UnitPrice"])
     df = df[(df["Quantity"] > 0) & (df["UnitPrice"] > 0)]
@@ -66,7 +71,7 @@ def load_with_pandas(file_bytes: bytes):
 
 def compute_rfm(df: pd.DataFrame) -> pd.DataFrame:
     if "CustomerID" not in df.columns:
-        raise ValueError("Thiếu CustomerID")
+        raise ValueError("Thiếu CustomerID để chạy RFM")
 
     ref_date = df["InvoiceDate"].max()
 
@@ -114,32 +119,55 @@ if "meta" not in st.session_state:
 # Sidebar
 # =========================
 st.sidebar.header("Menu")
+
 page = st.sidebar.radio(
     "Select Function",
     ["Upload Data", "Data Quality", "EDA", "RFM Segmentation", "Conclusion"]
 )
 
-uploaded = st.sidebar.file_uploader("Upload Online Retail CSV", type=["csv"])
+uploaded = st.sidebar.file_uploader(
+    "Upload Online Retail CSV",
+    type=["csv"]
+)
+
+# ---- Sample dataset button ----
+st.sidebar.markdown("---")
+st.sidebar.subheader("📂 Sample Dataset")
+
+if st.sidebar.button("Load sample: Online Retail"):
+    try:
+        with open("data/online_retail_sample.csv", "rb") as f:
+            df, meta = load_with_pandas(f.read())
+
+        st.session_state.df = df
+        st.session_state.meta = meta
+
+        st.success("Sample dataset loaded successfully ✅")
+    except Exception as e:
+        st.error(f"Cannot load sample dataset: {e}")
 
 # =========================
-# Load data
+# Load uploaded data
 # =========================
-if uploaded:
+if uploaded is not None:
     try:
         df, meta = load_with_pandas(uploaded.getvalue())
         st.session_state.df = df
         st.session_state.meta = meta
-        st.success("Dataset loaded successfully ✅")
+        st.success("Dataset uploaded successfully ✅")
     except Exception as e:
-        st.error(f"Load error: {e}")
+        st.error(f"Upload error: {e}")
         st.code(traceback.format_exc())
         st.stop()
 
+# =========================
+# Use data
+# =========================
 df = st.session_state.df
 meta = st.session_state.meta
 
 if df is None:
-    st.info("Upload CSV để bắt đầu.")
+    st.info("Upload CSV hoặc bấm **Load sample: Online Retail** để bắt đầu.")
     st.stop()
 
 pdf = df.head(300_000)
@@ -149,35 +177,60 @@ pdf = df.head(300_000)
 # =========================
 if page == "Upload Data":
     st.subheader("Dataset Overview")
+
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Rows", f"{len(df):,}")
-    c2.metric("Dropped", f"{meta['dropped_rows']:,}")
+    c2.metric("Dropped rows", f"{meta['dropped_rows']:,}")
     c3.metric("Min date", meta["min_date"].date())
     c4.metric("Max date", meta["max_date"].date())
+
     st.dataframe(pdf.head(50), use_container_width=True)
 
 elif page == "Data Quality":
     st.subheader("Data Quality")
+
     miss = (pdf.isna().mean() * 100).round(2)
-    st.dataframe(miss.reset_index().rename(columns={0: "Missing %"}))
+    miss_df = miss.reset_index()
+    miss_df.columns = ["Column", "Missing %"]
+    st.dataframe(miss_df, use_container_width=True)
 
 elif page == "EDA":
-    st.subheader("EDA")
+    st.subheader("Exploratory Data Analysis")
+
     st.metric("Total Revenue", f"{pdf['Revenue'].sum():,.2f}")
 
     pdf["Month"] = pdf["InvoiceDate"].dt.to_period("M").dt.to_timestamp()
     mrev = pdf.groupby("Month", as_index=False)["Revenue"].sum()
-    st.plotly_chart(px.line(mrev, x="Month", y="Revenue"), use_container_width=True)
+
+    st.plotly_chart(
+        px.line(mrev, x="Month", y="Revenue", title="Monthly Revenue Trend"),
+        use_container_width=True
+    )
 
 elif page == "RFM Segmentation":
-    st.subheader("RFM Segmentation")
+    st.subheader("RFM Customer Segmentation")
+
     if st.button("Compute RFM"):
         rfm = compute_rfm(df)
+
         st.dataframe(rfm.head(50), use_container_width=True)
+
         seg = rfm.groupby("Segment", as_index=False)["Monetary"].sum()
-        st.plotly_chart(px.bar(seg, x="Monetary", y="Segment", orientation="h"))
+        st.plotly_chart(
+            px.bar(seg, x="Monetary", y="Segment", orientation="h",
+                   title="Revenue by Customer Segment"),
+            use_container_width=True
+        )
 
 elif page == "Conclusion":
-    st.subheader("Conclusion")
-    st.write("- Doanh thu tập trung vào nhóm khách hàng nhỏ")
-    st.write("- RFM giúp xác định Champions / Loyal / At Risk")
+    st.subheader("Conclusion & Insights")
+
+    st.write(
+        """
+        - Hệ thống cho phép phân tích **Big Data bán lẻ** ngay cả khi người dùng
+          **không upload dữ liệu**, thông qua **sample dataset tích hợp sẵn**.
+        - Cùng một pipeline xử lý được áp dụng cho cả dữ liệu upload và dữ liệu mẫu.
+        - RFM giúp xác định **Champions / Loyal / At Risk customers**
+          để hỗ trợ quyết định kinh doanh.
+        """
+    )
