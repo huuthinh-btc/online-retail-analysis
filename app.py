@@ -15,7 +15,7 @@ st.set_page_config(
 )
 
 st.title("📊 Online Retail Analysis System")
-st.caption("Pandas-based EDA & RFM Customer Segmentation (Big Data Demo)")
+st.caption("Full EDA + Visualization + RFM Segmentation (Colab-equivalent, Big Data Demo)")
 
 # =========================
 # Helpers
@@ -31,19 +31,14 @@ def standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_with_pandas(file_bytes: bytes):
-    """
-    Unified data loading & cleaning pipeline
-    Used for BOTH uploaded files and sample dataset
-    """
     df = pd.read_csv(io.BytesIO(file_bytes), encoding="latin1")
     df = standardize_columns(df)
 
-    required_cols = ["InvoiceNo", "InvoiceDate", "Quantity", "UnitPrice"]
-    missing = [c for c in required_cols if c not in df.columns]
+    required = ["InvoiceNo", "InvoiceDate", "Quantity", "UnitPrice"]
+    missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"Thiếu cột bắt buộc: {missing}")
 
-    # Type casting
     df["InvoiceNo"] = df["InvoiceNo"].astype(str)
     df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce")
     df["UnitPrice"] = pd.to_numeric(df["UnitPrice"], errors="coerce")
@@ -51,7 +46,7 @@ def load_with_pandas(file_bytes: bytes):
 
     raw_rows = len(df)
 
-    # Cleaning
+    # Clean
     df = df[~df["InvoiceNo"].str.startswith("C")]
     df = df.dropna(subset=["InvoiceDate", "Quantity", "UnitPrice"])
     df = df[(df["Quantity"] > 0) & (df["UnitPrice"] > 0)]
@@ -69,9 +64,20 @@ def load_with_pandas(file_bytes: bytes):
     return df, meta
 
 
+def safe_top_n(df, by, metric, n=10):
+    if by not in df.columns or metric not in df.columns:
+        return None
+    return (
+        df.groupby(by, as_index=False)[metric]
+        .sum()
+        .sort_values(metric, ascending=False)
+        .head(n)
+    )
+
+
 def compute_rfm(df: pd.DataFrame) -> pd.DataFrame:
     if "CustomerID" not in df.columns:
-        raise ValueError("Thiếu CustomerID để chạy RFM")
+        raise ValueError("Thiếu CustomerID")
 
     ref_date = df["InvoiceDate"].max()
 
@@ -98,10 +104,12 @@ def compute_rfm(df: pd.DataFrame) -> pd.DataFrame:
             return "Champions"
         if r >= 4 and f >= 3:
             return "Loyal"
-        if r >= 4:
+        if r >= 4 and f <= 2:
             return "New Customers"
         if r <= 2 and f >= 4:
-            return "At Risk"
+            return "At Risk (High F)"
+        if r <= 2 and m >= 4:
+            return "At Risk (High M)"
         return "Others"
 
     rfm["Segment"] = rfm.apply(segment, axis=1)
@@ -119,18 +127,13 @@ if "meta" not in st.session_state:
 # Sidebar
 # =========================
 st.sidebar.header("Menu")
-
 page = st.sidebar.radio(
     "Select Function",
-    ["Upload Data", "Data Quality", "EDA", "RFM Segmentation", "Conclusion"]
+    ["Upload Data", "Data Quality", "EDA", "Visualization", "RFM Segmentation", "Conclusion"]
 )
 
-uploaded = st.sidebar.file_uploader(
-    "Upload Online Retail CSV",
-    type=["csv"]
-)
+uploaded = st.sidebar.file_uploader("Upload Online Retail CSV", type=["csv"])
 
-# ---- Sample dataset button ----
 st.sidebar.markdown("---")
 st.sidebar.subheader("📂 Sample Dataset")
 
@@ -138,10 +141,8 @@ if st.sidebar.button("Load sample: Online Retail"):
     try:
         with open("data/online_retail_sample.csv", "rb") as f:
             df, meta = load_with_pandas(f.read())
-
         st.session_state.df = df
         st.session_state.meta = meta
-
         st.success("Sample dataset loaded successfully ✅")
     except Exception as e:
         st.error(f"Cannot load sample dataset: {e}")
@@ -160,9 +161,6 @@ if uploaded is not None:
         st.code(traceback.format_exc())
         st.stop()
 
-# =========================
-# Use data
-# =========================
 df = st.session_state.df
 meta = st.session_state.meta
 
@@ -177,33 +175,76 @@ pdf = df.head(300_000)
 # =========================
 if page == "Upload Data":
     st.subheader("Dataset Overview")
-
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Rows", f"{len(df):,}")
     c2.metric("Dropped rows", f"{meta['dropped_rows']:,}")
-    c3.metric("Min date", str(meta["min_date"].date()))
-    c4.metric("Max date", str(meta["max_date"].date()))
-
+    c3.metric("Min date", meta["min_date"].strftime("%Y-%m-%d"))
+    c4.metric("Max date", meta["max_date"].strftime("%Y-%m-%d"))
     st.dataframe(pdf.head(50), use_container_width=True)
 
 elif page == "Data Quality":
-    st.subheader("Data Quality")
-
+    st.subheader("Data Quality & Schema")
     miss = (pdf.isna().mean() * 100).round(2)
     miss_df = miss.reset_index()
     miss_df.columns = ["Column", "Missing %"]
     st.dataframe(miss_df, use_container_width=True)
+    st.dataframe(pdf.describe(include="all"), use_container_width=True)
 
 elif page == "EDA":
     st.subheader("Exploratory Data Analysis")
 
-    st.metric("Total Revenue", f"{pdf['Revenue'].sum():,.2f}")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Total Revenue", f"{pdf['Revenue'].sum():,.2f}")
+    k2.metric("Orders", f"{pdf['InvoiceNo'].nunique():,}")
+    k3.metric("Customers", f"{pdf['CustomerID'].nunique():,}" if "CustomerID" in pdf.columns else "N/A")
+    k4.metric("Products", f"{pdf['StockCode'].nunique():,}" if "StockCode" in pdf.columns else "N/A")
 
     pdf["Month"] = pdf["InvoiceDate"].dt.to_period("M").dt.to_timestamp()
     mrev = pdf.groupby("Month", as_index=False)["Revenue"].sum()
+    st.plotly_chart(px.line(mrev, x="Month", y="Revenue", title="Monthly Revenue"), use_container_width=True)
+
+elif page == "Visualization":
+    st.subheader("Visualization Dashboard")
+
+    if "Country" in pdf.columns:
+        top_c = safe_top_n(pdf, "Country", "Revenue", 10)
+        st.plotly_chart(px.bar(top_c, x="Revenue", y="Country", orientation="h",
+                               title="Top 10 Countries by Revenue"),
+                        use_container_width=True)
+
+    if "Description" in pdf.columns:
+        top_p = safe_top_n(pdf, "Description", "Revenue", 15)
+        st.plotly_chart(px.bar(top_p, x="Revenue", y="Description", orientation="h",
+                               title="Top Products by Revenue"),
+                        use_container_width=True)
+
+    basket = pdf.groupby("InvoiceNo", as_index=False).agg(
+        Items=("Quantity", "sum"),
+        Lines=("InvoiceNo", "size"),
+        Revenue=("Revenue", "sum"),
+    )
+
+    c1, c2 = st.columns(2)
+    c1.plotly_chart(px.histogram(basket, x="Revenue", nbins=50,
+                                 title="Order Revenue Distribution"),
+                    use_container_width=True)
+    c2.plotly_chart(px.histogram(basket, x="Lines", nbins=50,
+                                 title="Lines per Order"),
+                    use_container_width=True)
+
+    c3, c4 = st.columns(2)
+    c3.plotly_chart(px.box(pdf, y="UnitPrice", title="UnitPrice Boxplot"),
+                    use_container_width=True)
+    c4.plotly_chart(px.box(pdf, y="Quantity", title="Quantity Boxplot"),
+                    use_container_width=True)
 
     st.plotly_chart(
-        px.line(mrev, x="Month", y="Revenue", title="Monthly Revenue Trend"),
+        px.scatter(
+            pdf.sample(min(len(pdf), 20000)),
+            x="UnitPrice",
+            y="Quantity",
+            title="UnitPrice vs Quantity (sample)"
+        ),
         use_container_width=True
     )
 
@@ -212,25 +253,27 @@ elif page == "RFM Segmentation":
 
     if st.button("Compute RFM"):
         rfm = compute_rfm(df)
-
         st.dataframe(rfm.head(50), use_container_width=True)
 
-        seg = rfm.groupby("Segment", as_index=False)["Monetary"].sum()
-        st.plotly_chart(
-            px.bar(seg, x="Monetary", y="Segment", orientation="h",
-                   title="Revenue by Customer Segment"),
-            use_container_width=True
+        seg = rfm.groupby("Segment", as_index=False).agg(
+            Customers=("CustomerID", "count"),
+            Revenue=("Monetary", "sum"),
         )
+
+        st.plotly_chart(px.bar(seg, x="Revenue", y="Segment",
+                               orientation="h", title="Revenue by Segment"),
+                        use_container_width=True)
+
+        st.plotly_chart(px.pie(seg, names="Segment", values="Customers",
+                               title="Customer Distribution by Segment"),
+                        use_container_width=True)
 
 elif page == "Conclusion":
     st.subheader("Conclusion & Insights")
-
     st.write(
         """
-        - Hệ thống cho phép phân tích **Big Data bán lẻ** ngay cả khi người dùng
-          **không upload dữ liệu**, thông qua **sample dataset tích hợp sẵn**.
-        - Cùng một pipeline xử lý được áp dụng cho cả dữ liệu upload và dữ liệu mẫu.
-        - RFM giúp xác định **Champions / Loyal / At Risk customers**
-          để hỗ trợ quyết định kinh doanh.
+        - Phân tích dữ liệu bán lẻ quy mô lớn với pipeline thống nhất.
+        - EDA cho thấy doanh thu tập trung vào một số ít sản phẩm, quốc gia và khách hàng.
+        - RFM segmentation hỗ trợ xác định Champions, Loyal và At Risk customers.
         """
     )
