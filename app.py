@@ -115,14 +115,17 @@ def compute_rfm(df: pd.DataFrame) -> pd.DataFrame:
 
     ref_date = pd.to_datetime(df["InvoiceDate"].max())
 
-    rfm = df.groupby(
-        by="CustomerID",
-        agg={
-            "LastPurchase": pd.NamedAgg(column=("InvoiceDate"),
-            "Frequency": pd.NamedAgg(column=("InvoiceNo"),
-            "Monetary": pd.NamedAgg(column=("Revenue"),
-        }
-    ).to_pandas_df()
+    rfm = (
+        df.groupby(
+            "CustomerID",
+            as_index=False
+        )
+        .agg(
+            LastPurchase=("InvoiceDate", "max"),
+            Frequency=("InvoiceNo", "nunique"),
+            Monetary=("Revenue", "sum"),
+        )
+    )
 
     rfm["LastPurchase"] = pd.to_datetime(rfm["LastPurchase"])
     rfm["Recency"] = (ref_date - rfm["LastPurchase"]).dt.days
