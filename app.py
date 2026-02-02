@@ -181,8 +181,8 @@ if page == "Upload Data":
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Rows", f"{len(df):,}")
     c2.metric("Dropped rows", f"{meta['dropped_rows']:,}")
-    c3.metric("Min date", meta["min_date"].date())
-    c4.metric("Max date", meta["max_date"].date())
+    c3.metric("Min date", str(meta["min_date"].date()))
+    c4.metric("Max date", str(meta["max_date"].date()))
 
     st.dataframe(pdf.head(50), use_container_width=True)
 
