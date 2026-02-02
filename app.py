@@ -5,7 +5,6 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
-import vaex
 
 
 # =========================
@@ -13,7 +12,7 @@ import vaex
 # =========================
 st.set_page_config(page_title="Online Retail Analysis System", page_icon="📊", layout="wide")
 st.title("📊 Online Retail Analysis System")
-st.caption("Vaex + RFM Customer Segmentation (Colab, conda-forge, pydantic<2)")
+st.caption("Pandas + RFM Customer Segmentation (Colab, conda-forge, pydantic<2)")
 
 
 # =========================
@@ -40,13 +39,13 @@ def standardize_cols_pdf(pdf: pd.DataFrame) -> pd.DataFrame:
     return pdf
 
 
-def load_with_pandas_then_vaex(file_bytes: bytes):
+def load_with_pandas(file_bytes: bytes):
     """
     Robust loader:
     - pandas read CSV (stable parsing)
     - parse InvoiceDate safely
     - clean data
-    - convert to Vaex
+    - return pandas DataFrame
     """
     pdf = pd.read_csv(io.BytesIO(file_bytes), encoding="latin1")
     pdf = standardize_cols_pdf(pdf)
@@ -85,8 +84,8 @@ def load_with_pandas_then_vaex(file_bytes: bytes):
     cleaned_rows = len(pdf)
     dropped = raw_rows - cleaned_rows
 
-    # convert to Vaex
-    vdf = vaex.from_pandas(pdf, copy_index=False)
+    # return pandas DataFrame
+    df = vaex.from_pandas(pdf, copy_index=False)
 
     meta = {
         "raw_rows": raw_rows,
@@ -95,7 +94,7 @@ def load_with_pandas_then_vaex(file_bytes: bytes):
         "min_date": pd.to_datetime(pdf["InvoiceDate"].min()),
         "max_date": pd.to_datetime(pdf["InvoiceDate"].max()),
     }
-    return vdf, meta
+    return df, meta
 
 
 def safe_top_n(pdf: pd.DataFrame, by: str, metric: str, n=10):
@@ -111,12 +110,12 @@ def safe_top_n(pdf: pd.DataFrame, by: str, metric: str, n=10):
 
 
 def compute_rfm(vdf: vaex.dataframe.DataFrame) -> pd.DataFrame:
-    if "CustomerID" not in vdf.get_column_names():
+    if "CustomerID" not in df.get_column_names():
         raise ValueError("Thiếu CustomerID để chạy RFM")
 
-    ref_date = pd.to_datetime(vdf["InvoiceDate"].max())
+    ref_date = pd.to_datetime(df["InvoiceDate"].max())
 
-    rfm = vdf.groupby(
+    rfm = df.groupby(
         by="CustomerID",
         agg={
             "LastPurchase": vaex.agg.max("InvoiceDate"),
@@ -169,7 +168,7 @@ page = st.sidebar.radio(
 uploaded = st.sidebar.file_uploader("Upload Online Retail CSV", type=["csv"])
 
 if "vdf" not in st.session_state:
-    st.session_state.vdf = None
+    st.session_state.df = None
 if "meta" not in st.session_state:
     st.session_state.meta = None
 
@@ -180,10 +179,10 @@ if "meta" not in st.session_state:
 if uploaded:
     try:
         vdf, meta = load_with_pandas_then_vaex(uploaded.getvalue())
-        st.session_state.vdf = vdf
+        st.session_state.df = vdf
         st.session_state.meta = meta
         st.success("Dataset loaded successfully (Vaex) ✅")
-        st.caption(f"Rows: {len(vdf):,} | Date range: {meta['min_date']} → {meta['max_date']}")
+        st.caption(f"Rows: {len(df):,} | Date range: {meta['min_date']} → {meta['max_date']}")
         if meta["dropped_rows"] > 0:
             st.warning(f"Đã loại {meta['dropped_rows']:,} dòng lỗi/hoàn-huỷ/giá-trị âm hoặc thiếu.")
     except Exception as e:
@@ -191,14 +190,14 @@ if uploaded:
         st.code(traceback.format_exc())
         st.stop()
 
-vdf = st.session_state.vdf
+df = st.session_state.vdf
 meta = st.session_state.meta
 if vdf is None:
     st.info("Upload CSV ở sidebar để bắt đầu.")
     st.stop()
 
 # sample to display quickly (still big enough for charts)
-pdf = vdf.head(300_000).to_pandas_df()
+pdf = df.head(300_000).to_pandas_df()
 pdf["InvoiceDate"] = pd.to_datetime(pdf["InvoiceDate"], errors="coerce")
 
 
@@ -208,7 +207,7 @@ pdf["InvoiceDate"] = pd.to_datetime(pdf["InvoiceDate"], errors="coerce")
 if page == "Upload Data":
     st.subheader("1) Upload Data")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Rows (clean)", f"{len(vdf):,}")
+    c1.metric("Rows (clean)", f"{len(df):,}")
     c2.metric("Dropped rows", f"{meta['dropped_rows']:,}")
     c3.metric("Min date", str(meta["min_date"].date()))
     c4.metric("Max date", str(meta["max_date"].date()))
@@ -357,7 +356,7 @@ elif page == "RFM Segmentation":
     st.write("Chạy RFM trên **Vaex** (groupby nhanh) → xuất ra pandas để hiển thị/plot.")
     if st.button("Compute RFM"):
         try:
-            rfm = compute_rfm(vdf)
+            rfm = compute_rfm(df)
 
             c1, c2, c3 = st.columns(3)
             c1.metric("Customers", f"{rfm['CustomerID'].nunique():,}")
